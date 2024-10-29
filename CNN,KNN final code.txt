@@ -1,0 +1,120 @@
+import os
+import numpy as np
+from sklearn.neighbors import NearestNeighbors
+import cv2
+import tensorflow as tf
+import streamlit as st
+from tensorflow.keras.optimizers import Adam
+
+# Load the trained CNN model
+model = tf.keras.models.load_model('C:/Users/manju/Desktop/video_retrieval_model11.h5', compile=False)
+model.compile(optimizer=Adam(), loss='categorical_crossentropy')
+
+# Load the dataset features
+dataset_features = np.load('C:/Users/manju/Desktop/dataset_features9.npy')
+
+# Rest of the code remains the same...
+
+# Reshape the dataset features to have two dimensions
+dataset_features = dataset_features.reshape(dataset_features.shape[0], -1)
+
+# Provide the path to the dataset directory
+dataset_path = 'C:/Users/manju/Desktop/dataset2'
+
+# Retrieve video file names and corresponding labels
+video_paths = []
+labels = []
+
+for label, class_name in enumerate(sorted(os.listdir(dataset_path))):
+    class_dir = os.path.join(dataset_path, class_name)
+    if os.path.isdir(class_dir):
+        for video_file in sorted(os.listdir(class_dir)):
+            video_path = os.path.join(class_dir, video_file)
+            video_paths.append(video_path)
+            labels.append(label)
+
+# Function to extract frames from a video
+def extract_frames(video_path, num_frames=10):
+    frames = []
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_indices = np.linspace(0, total_frames - 1, num=num_frames, dtype=np.int32)
+
+    for index in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+        ret, frame = cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+            frame = cv2.resize(frame, (224, 224))  # Resize frame to (224, 224)
+            frames.append(frame)
+
+    cap.release()
+    return frames
+
+@tf.function
+def extract_features(video_path):
+    # Extract frames from the video
+    frames = extract_frames(video_path)
+
+    # Preprocess frames (normalize, resize, etc.)
+    preprocessed_frames = np.array(frames) / 255.0
+
+    # Extract features from the frames using the trained CNN model
+    features = []
+    for frame in preprocessed_frames:
+        frame = np.expand_dims(frame, axis=0)
+        feature = model(frame, training=False)
+        features.append(tf.identity(feature))  # Use tf.identity() to prevent conversion to NumPy array
+
+    return tf.concat(features, axis=0)
+
+# Function to retrieve similar videos
+def retrieve_similar_videos(query_video_path, k=5):
+    # Extract features from the query video
+    query_features = extract_features(query_video_path)
+
+    # Reshape the query features to have two dimensions
+    query_features = query_features.numpy().reshape(1, -1)
+
+    # Find k nearest neighbors using the extracted query features
+    nn_model = NearestNeighbors(n_neighbors=k, metric='euclidean')
+    nn_model.fit(dataset_features)
+    _, indices = nn_model.kneighbors(query_features)
+
+    # Retrieve similar video paths and labels
+    similar_video_paths = [video_paths[idx] for idx in indices[0]]
+    similar_video_labels = [labels[idx] for idx in indices[0]]
+
+    return similar_video_paths, similar_video_labels
+
+# Streamlit app
+def main():
+    st.title("Video Retrieval App")
+
+    # File uploader
+    uploaded_file = st.file_uploader("Upload a video file", type=["mp4"])
+
+    if uploaded_file is not None:
+        # Save the uploaded video to a temporary location
+        temp_path = "temp_video.mp4"
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.read())
+
+        # Retrieve similar videos for the uploaded video
+        similar_videos, similar_labels = retrieve_similar_videos(temp_path)
+
+        # Display the retrieved similar videos
+        st.subheader("Similar Videos:")
+        for video_path, label in zip(similar_videos, similar_labels):
+            st.text("Video Path: " + video_path)
+            st.text("Label: " + str(label))
+            st.video(video_path)  # Display the video
+
+            st.write("---")
+
+        # Remove the temporary video file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,61 @@
+import os
+import numpy as np
+from sklearn.neighbors import NearestNeighbors
+import cv2
+import tensorflow as tf
+
+# Load the trained CNN model
+model = tf.keras.models.load_model('/content/drive/MyDrive/video_retrieval_model11.h5')
+
+# Provide the path to the dataset directory
+dataset_path = '/content/drive/MyDrive/Dataset2'
+
+# Retrieve video file names and corresponding labels
+video_paths = []
+labels = []
+
+for label, class_name in enumerate(sorted(os.listdir(dataset_path))):
+    class_dir = os.path.join(dataset_path, class_name)
+    if os.path.isdir(class_dir):
+        for video_file in sorted(os.listdir(class_dir)):
+            video_path = os.path.join(class_dir, video_file)
+            video_paths.append(video_path)
+            labels.append(label)
+
+# Function to extract features from a video
+def extract_features(video_path):
+    # Extract frames from the video
+    frames = []
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    while len(frames) < 10:  # Extract a fixed number of frames (e.g., 10)
+        ret, frame = cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+            frame = cv2.resize(frame, (224, 224))  # Resize frame to (224, 224)
+            frames.append(frame)
+
+    cap.release()
+
+    # Preprocess frames (normalize, resize, etc.)
+    preprocessed_frames = np.array(frames) / 255.0
+
+    # Extract features from the frames using the trained CNN model
+    features = model.predict(preprocessed_frames)
+
+    return features
+
+# Extract features from the dataset videos
+dataset_features = []
+for video_path in video_paths:
+    video_features = extract_features(video_path)
+    dataset_features.append(video_features)
+
+
+
+# Convert the list of features into a numpy array
+dataset_features = np.array(dataset_features)
+
+# Save the dataset features to a file for future use
+np.save('/content/drive/MyDrive/dataset_features14.npy', dataset_features)

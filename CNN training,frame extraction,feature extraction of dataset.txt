@@ -1,0 +1,131 @@
+import os
+import cv2
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import NearestNeighbors
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+import matplotlib.pyplot as plt
+import sklearn.metrics as metrics
+
+# Function to extract frames from a video
+def extract_frames(video_path, num_frames=10):
+    frames = []
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_indices = np.linspace(0, total_frames - 1, num=num_frames, dtype=np.int32)
+
+    for index in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+        ret, frame = cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+            frame = cv2.resize(frame, (224, 224))  # Resize frame to desired dimensions
+            frames.append(frame)
+
+    cap.release()
+    return frames
+
+# Provide the path to the dataset directory
+dataset_path = '/content/drive/MyDrive/Dataset2'
+
+# Retrieve video file names and corresponding labels
+video_paths = []
+labels = []
+
+for label, class_name in enumerate(sorted(os.listdir(dataset_path))):
+    class_dir = os.path.join(dataset_path, class_name)
+    if os.path.isdir(class_dir):
+        for video_file in sorted(os.listdir(class_dir)):
+            video_path = os.path.join(class_dir, video_file)
+            video_paths.append(video_path)
+            labels.append(label)
+
+# Extract frames and corresponding labels from the video dataset
+all_frames = []
+all_labels = []
+
+for path, label in zip(video_paths, labels):
+    frames = extract_frames(path)
+    all_frames.extend(frames)
+    all_labels.extend([label] * len(frames))
+
+# Convert frames and labels to numpy arrays
+all_frames = np.array(all_frames)
+all_labels = np.array(all_labels)
+
+# Split the dataset into training and testing sets
+train_frames, test_frames, train_labels, test_labels = train_test_split(all_frames, all_labels, test_size=0.3, random_state=42)
+
+# Normalize the frame data
+train_frames = train_frames / 255.0
+test_frames = test_frames / 255.0
+
+# Build the CNN model
+model = Sequential()
+model.add(Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=train_frames.shape[1:]))
+model.add(Conv2D(64, kernel_size=(3, 3), activation='relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+model.add(Flatten())
+model.add(Dense(128, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(len(np.unique(labels)), activation='softmax'))
+
+# Compile the model
+model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+# Train the model
+history = model.fit(train_frames, train_labels, batch_size=32, epochs=10, validation_data=(test_frames, test_labels))
+
+# Extract features from trained CNN model
+feature_extractor = tf.keras.Model(inputs=model.input, outputs=model.get_layer('flatten').output)
+
+# Extract features from the entire dataset
+dataset_features = feature_extractor.predict(all_frames)
+
+# Train a Nearest Neighbors model on the extracted features
+nn_model = NearestNeighbors(n_neighbors=5, metric='euclidean')
+nn_model.fit(dataset_features)
+
+# Save the models for future use
+model.save('/content/drive/MyDrive/video_retrieval_model11.h5')
+np.save('/content/drive/MyDrive/dataset_features11.npy', dataset_features)
+
+# Get the training history from the model
+train_loss = history.history['loss']
+train_accuracy = history.history['accuracy']
+val_loss = history.history['val_loss']
+val_accuracy = history.history['val_accuracy']
+
+# Plot the loss graph
+plt.plot(train_loss)
+plt.plot(val_loss)
+plt.title('Model Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend(['Train', 'Validation'], loc='upper left')
+plt.show()
+
+# Plot the accuracy graph
+plt.plot(train_accuracy)
+plt.plot(val_accuracy)
+plt.title('Model Accuracy')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend(['Train', 'Validation'], loc='upper left')
+plt.show()
+
+# Evaluate the model on the test set
+test_loss, test_accuracy = model.evaluate(test_frames, test_labels)
+
+# Get the predicted labels for the test set
+predictions = model.predict(test_frames)
+predicted_labels = np.argmax(predictions, axis=1)
+
+# Calculate the F1 score
+f1_score = metrics.f1_score(test_labels, predicted_labels, average='weighted')
+
+print("Test Loss:", test_loss)
+print("Test Accuracy:", test_accuracy)
+print("F1 Score:", f1_score)
